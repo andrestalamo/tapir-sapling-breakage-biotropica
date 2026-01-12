@@ -54,39 +54,20 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 ```{r librerias}
 
 library(readxl)
-library(tidyverse)
-library(knitr)
-library(kableExtra)  # EL PAQUETE kableExtra también requiere el paquete LaTeX: float
-library(float)
-library(xtable)
-library(waffle)
-library(treemapify)
-library(ggrepel)
-library(broom)
-library(gt)
-library(gtsummary)
-library(gtExtras) # para hacer un resumen rápido de la base de datos
 library(janitor)
-library(ggpubr) # para agregar resultados de pruebas a ggplot
-library(rstatix) # para armar resúmenes de pruebas para ggplot
-library(ggridges) # para hacer los polígonos de frecuencia superpuestos
-library(ggcorrplot)
-library(corrplot)
-library(MuMIn)
+library(tidyverse)
+
+library(ggrepel)
+library(ggpubr)
 library(scales)
-library(DHARMa)
-library(brms)
-# library(MASS)
-# library(conflicted)
-library(emmeans)
+
 library(lme4)
-library(dplyr)
-library(broom.mixed)
-library(broom)
-library(ggtext)
-library(patchwork)
-library(nnet)
 library(glmmTMB)
+library(emmeans)
+
+library(nnet)
+library(patchwork)
+library(ggtext)
 
 ```
 
