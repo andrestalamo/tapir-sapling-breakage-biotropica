@@ -1,0 +1,949 @@
+---
+title: "Lowland tapirs (*Tapirus terrestris*) as ecosystem engineers: selective sapling breakage and its structural consequences in Yungas Andean forests"
+subtitle: "Reproducible workflow for the figures presented in the manuscript" 
+author: 
+  - name: "Soledad de Bustos"
+    affiliation: "Administración de Parques Nacionales"
+    email: soledaddebustos@yahoo.com.ar
+  - name: "Silvia Cristina Chalukian"
+    affiliation: "Tapir Specialist Group – IUCN, Argentina"
+  - name: "Leónidas Lizárraga"
+    affiliation: "Administración de Parques Nacionales"
+  - name: "Rubén Barquez"
+    affiliation: "PIDBA, Facultad de Ciencias Naturales e Instituto Miguel Lillo, Universidad Nacional de Tucumán, Argentina"
+  - name: "Andrés Tálamo"
+    affiliation: "IBIGEO-UNSa-CONICET"
+    email: andrestalamo@gmail.com
+  
+date: today
+title-block-banner: "#c994c7"
+title-block-banner-color: "white"
+format:
+  html:
+    fig-responsive: false 
+    code-fold: true
+    code-annotations: hover  # <- AQUÍ (nuevo)
+    embed-resources: true
+    toc: true
+    toc-location: left
+    toc-depth: 6
+    number-sections: false
+    lang: en
+    theme: journal
+crossref:
+  fig-title: Figure
+  tbl-title: Table
+  fig-prefix: "Fig."
+  tbl-prefix: "Table"
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+---
+
+
+------------------------------------------------------------------------
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## Libraries
+
+```{r librerias}
+
+library(readxl)
+library(tidyverse)
+library(knitr)
+library(kableExtra)  # EL PAQUETE kableExtra también requiere el paquete LaTeX: float
+library(float)
+library(xtable)
+library(waffle)
+library(treemapify)
+library(ggrepel)
+library(broom)
+library(gt)
+library(gtsummary)
+library(gtExtras) # para hacer un resumen rápido de la base de datos
+library(janitor)
+library(ggpubr) # para agregar resultados de pruebas a ggplot
+library(rstatix) # para armar resúmenes de pruebas para ggplot
+library(ggridges) # para hacer los polígonos de frecuencia superpuestos
+library(ggcorrplot)
+library(corrplot)
+library(MuMIn)
+library(scales)
+library(DHARMa)
+library(brms)
+# library(MASS)
+# library(conflicted)
+library(emmeans)
+library(lme4)
+library(dplyr)
+library(broom.mixed)
+library(broom)
+library(ggtext)
+library(patchwork)
+library(nnet)
+library(glmmTMB)
+
+```
+
+------------------------------------------------------------------------
+
+## Data preparation
+
+
+```{r, warning=F}
+
+tapir <- read_xlsx("Renovales (3).xlsx")
+
+tapir <- clean_names(tapir)
+
+# tapir <- tapir %>% mutate_if(is.character, factor) %>% 
+#   mutate(quiebre2 = if_else(quebrado == "si", 1, 0)) 
+
+tapir <- tapir %>%
+  mutate(across(where(is.character), as.factor)) %>%
+  mutate(quiebre2 = if_else(quebrado == "si", 1L, 0L))
+
+renovales <- tapir %>% 
+  filter(conteo_renovales == 1 & conteo_ramas == 1) %>%  # Filtra solo los individuos
+  mutate(
+    indiv_vivo_muerto = case_when(
+      is.na(indiv_vivo_muerto) & quebrado == "no" ~ "v",
+      is.na(indiv_vivo_muerto) & quebrado == "si" ~ "No registrado",
+      TRUE ~ as.character(indiv_vivo_muerto)
+    ),
+    especie = case_when(
+      especie == "Laurel" ~ "Lauraceae",
+      especie == "1" ~ "Unknown 1",
+      especie == "2" ~ "Unknown 2",
+      TRUE ~ as.character(especie)
+    ),
+    especie = factor(especie),
+    indiv_vivo_muerto = factor(indiv_vivo_muerto,
+                               levels = c("m", "v", "No registrado"))
+    )
+
+# Base para análisis de nº de ramas según altura
+# Armo la base de datos primero
+
+# names(renovales)
+
+df_ramas <- renovales %>%
+  dplyr::select(parcela, bosque, ramific_hasta_1_m, ramific_x_debajo_quiebre) %>% 
+  pivot_longer(cols = c(3,4),
+               names_to = "altura",
+               values_to = "n_ramas", names_prefix = "ramific_"
+               ) %>% 
+  drop_na()
+
+df_ramas_sp <- renovales %>%
+  dplyr::select(parcela, bosque, especie, ramific_hasta_1_m, ramific_x_debajo_quiebre) %>% 
+  pivot_longer(cols = c(4, 5),
+               names_to = "altura",
+               values_to = "n_ramas", names_prefix = "ramific_"
+               ) %>% 
+  drop_na()
+
+```
+
+------------------------------------------------------------------------
+
+## Figure 2
+
+```{r}
+#| fig-cap: Percentage of broken and unbroken saplings by morphospecies and forest type. Absolute frequencies (n) per morphospecies and forest type are shown in parentheses.
+#| fig.height: 10
+#| fig.width: 8
+#| fig.align: 'center'
+
+# Para agregar los n de cada especie, que me pidió la Sole:
+# Primero armé una tabla con % y otra con conteo total.
+# Luego las uní:
+
+porc <- 
+  renovales %>% 
+  group_by(especie, bosque) %>%
+  summarize(
+    con_quiebre = sum(quebrado == "si")/n()*100,
+    sin_quiebre = sum(quebrado == "no")/n()*100,
+  ) %>%
+  pivot_longer(cols = c(3,4),
+               names_to = "quebrado", 
+               values_to = "porc") %>%
+  mutate(porc = round(porc, 1))
+
+conteo <-
+  renovales %>% 
+  group_by(especie, bosque) %>%
+  summarize(
+    con_quiebre = sum(quebrado == "si"),
+    sin_quiebre = sum(quebrado == "no"),
+  ) %>%
+  pivot_longer(cols = c(3,4),
+               names_to = "quebrado", 
+               values_to = "conteo") %>%
+  mutate(conteo = round(conteo, 1))
+
+base_unida <- left_join(porc, conteo, by = c("especie", "bosque", "quebrado"))
+
+# Calcula la suma del conteo para cada especie
+suma_conteo <- base_unida %>%
+  group_by(especie, bosque) %>%
+  summarize(total_conteo = sum(conteo))
+
+base_unida_2 <- base_unida %>% left_join(suma_conteo, by = c("especie", "bosque")) %>% 
+  mutate(total_conteo = ifelse(row_number() %% 2 == 0, NA, total_conteo)) 
+
+# Ahora crea el gráfico
+base_unida_2 %>% 
+  ggplot(aes(x = especie, y = porc, fill = quebrado, label = porc)) +
+  coord_flip() +
+  facet_wrap(~bosque,
+             labeller = labeller(bosque = 
+                                   c("Mad" = "Old-growth",
+                                     "Sec" = "Secondary"))
+  ) +
+  geom_col(position = position_stack()) +
+  geom_text(position = position_stack(vjust = 0.5), size = 3) +
+  geom_text(data = filter(base_unida_2, !is.na(total_conteo)),
+            aes(y = 118, x = especie, label = paste0("(n=", total_conteo,")")),
+            size = 3,
+            color = "black"
+  ) +
+  labs(y = "Percentage of sapling",
+       x = "",
+       fill = NULL) +
+  scale_fill_manual(
+    labels = c("Broken", "Unbroken"),
+    values = c("#fdcdac", "#b3e2cd")
+  ) +
+  scale_y_continuous(
+    limits = c(0, 125),
+    breaks = seq(0, 100, 25)
+  ) +
+  theme_bw() +
+  theme(axis.text.y = element_text(
+    face = ifelse(levels(renovales$especie) %in% c("Lauraceae", "Unknown 1", "Unknown 2"),
+                  "plain", "italic")
+  ))
+```
+
+## Figure 3.
+
+```{r}
+#| fig-cap: Rank–abundance curves of sapling assemblages in old–growth and secondary forests.
+#| fig.height: 3
+#| fig.width: 5
+#| fig.align: 'center'
+
+datos_RA <- renovales %>%
+  group_by(bosque, especie) %>%
+  summarise(n = n()) %>% 
+  # count() %>% 
+  arrange(desc(n), .by_group = T) %>%
+  # ungroup() %>%
+  mutate(pi = n/sum(n),
+         orden = seq(1:n()))
+
+# Curva de Rango Abundancia para todas las sps juntas
+
+ggplot(datos_RA, aes(x = orden, y = pi, group = bosque)) +
+  facet_wrap(~bosque, ncol = 2,
+             labeller = labeller(bosque = 
+                                   c("Mad" = "Old-growth",
+                                     "Sec" = "Secondary"))) +
+  geom_line(color="grey70") +
+  geom_point(aes(color = bosque),
+             size = 2,
+             alpha = 0.8) +
+  geom_label_repel(
+    mapping = aes(label = especie),
+    size = 3,
+    box.padding = 0.5,
+    point.padding = 0.5,
+    label.padding = 0.1,
+    label.size = 0,
+    segment.color = 'grey70',
+    fontface = "italic") +
+  labs(
+       y = "Relative abundace (pi)",
+       x = "Species rank")  +
+  # scale_y_continuous(limits = c(-0.05,0.25),
+  #                    breaks = seq(0,0.25,0.05)) +
+  # scale_x_continuous(limits = c(-0.03,28),
+  #                    breaks = seq(1,27,2)) +
+  scale_color_manual(
+    labels = c("yes","no"),
+    values = c("#66c2a4","#ccece6")
+  ) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+```
+
+## Figure 4.
+
+```{r}
+#| fig-cap: Predicted probability of sapling breakage as a function of stem diameter for each species (with relative abundance greater than 3%) and normalized Manly’s selection index for the old–growth forest (a, b) and for the secondary forest (c, d).
+#| fig.height: 5
+#| fig.width: 7
+#| fig.align: 'center'
+
+#--- Old-growth forest ---------------------------------------------------------
+
+# Filter old-growth forest data
+maduro <- renovales %>%
+  filter(bosque == "Mad")
+
+# Filter species with >3% abundance in old-growth forest
+maduro_3 <- renovales %>% 
+  # Compute abundances by species within each forest type
+  group_by(bosque, especie) %>%
+  summarise(
+    n = n(),
+    .groups = "drop"  # avoids grouping messages
+  ) %>%
+  # Compute percent abundance within each forest type
+  group_by(bosque) %>%
+  mutate(
+    abundancia = n / sum(n) * 100
+  ) %>%
+  ungroup() %>%
+  # Keep only species with >3% abundance in old-growth forest
+  filter(bosque == "Mad" & abundancia > 3) %>%
+  # Join back to the original data to keep all columns
+  inner_join(maduro, by = c("bosque", "especie")) %>%
+  # Drop unused factor levels
+  droplevels()
+
+# Best model for the old-growth forest
+m_glmm_quad <- glmer(
+  quebrado ~ especie + poly(diametro_quiebre_mm, 2) + (1 | parcela),
+  data = maduro_3,
+  family = binomial
+)
+
+# 1. Ensure 'parcela' is a factor
+maduro_3$parcela <- factor(maduro_3$parcela)
+
+# 2. Create polynomial variables with the attributes of the original model
+poly_fit <- poly(maduro_3$diametro_quiebre_mm, degree = 2)
+maduro_3$poly1 <- poly_fit[, 1]
+maduro_3$poly2 <- poly_fit[, 2]
+
+# 3. Fit the explicit model using poly1 and poly2
+modelo_explicito <- glmer(
+  quebrado ~ especie * poly1 + poly2 + (1 | parcela),
+  family = binomial,
+  data = maduro_3
+)
+
+# 4. Create the prediction grid
+new_data <- expand.grid(
+  diametro_quiebre_mm = seq(
+    min(maduro_3$diametro_quiebre_mm, na.rm = TRUE),
+    max(maduro_3$diametro_quiebre_mm, na.rm = TRUE),
+    length.out = 100
+  ),
+  bosque = levels(maduro_3$bosque),
+  especie = levels(maduro_3$especie)
+)
+
+# 5. Add a valid plot level (random effects ignored during prediction)
+new_data$parcela <- factor(
+  levels(maduro_3$parcela)[1],
+  levels = levels(maduro_3$parcela)
+)
+
+# 6. Compute poly1 and poly2 for new_data using poly_fit
+new_data$poly1 <- predict(poly_fit, new_data$diametro_quiebre_mm)[, 1]
+new_data$poly2 <- predict(poly_fit, new_data$diametro_quiebre_mm)[, 2]
+
+# 7. Predict from the fitted model
+new_data$pred <- predict(
+  modelo_explicito,
+  newdata = new_data,
+  type = "response",
+  re.form = NA
+)
+
+fig_mad_modelo <- 
+  ggplot(new_data, aes(x = diametro_quiebre_mm, y = pred, color = especie)) +
+  geom_line(size = 1) +
+  labs(
+    subtitle = "Old-growth forest",
+    y = "Probability of breakage",
+    x = "Sapling diameter (mm)",
+    color = NULL
+  ) +
+  scale_color_discrete(labels = function(x) {
+    ifelse(x == "Lauraceae", x, paste0("*", x, "*"))
+  }) +
+  coord_cartesian(ylim = c(0, 0.4)) +
+  theme_bw() +
+  theme(
+    legend.text = element_markdown(),  # needed to render labels with *
+    legend.position = "none",
+    legend.background = element_rect(fill = "transparent"),
+    legend.key = element_rect(fill = "transparent")
+  )
+
+#--- Manly's selection index --------------------------------------------------
+
+manly_maduro <- maduro_3 %>%
+  group_by(parcela, especie) %>%
+  summarise(
+    usados = sum(quebrado == "si"),
+    disponibles = n(),
+    .groups = "drop"
+  ) %>%
+  group_by(parcela) %>%
+  mutate(
+    ui_ai = usados / disponibles,
+    suma_ui_ai = sum(ui_ai),
+    alpha = ui_ai / suma_ui_ai,
+    esperado = 1 / n()  # expected value under proportional use
+  ) %>%
+  ungroup()
+
+fig_mad_manly <- 
+  ggplot(manly_maduro, aes(x = reorder(especie, alpha), y = alpha, fill = especie, color = especie)) +
+  stat_summary(
+    fun = mean,
+    fun.min = function(x) mean(x) - sd(x) / sqrt(length(x)),
+    fun.max = function(x) mean(x) + sd(x) / sqrt(length(x)),
+    geom = "pointrange",
+    size = 0.8,
+    # color = "black",
+    position = position_nudge(x = 0)
+  ) +
+  # Reference line (proportional use)
+  geom_hline(yintercept = mean(manly_maduro$esperado), linetype = "dashed", color = "gray30") +
+  coord_flip() +
+  labs(
+    # title = "Manly's selection index (α)",
+    subtitle = "Old-growth forest",
+    y = expression("Selection index" ~ (alpha[i])),
+    x = ""
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.y = element_text(face = "italic"),
+    plot.title = element_text(size = 14),
+    legend.position = "none"
+  )
+
+#--- Secondary forest ----------------------------------------------------------
+
+# Filter secondary forest data
+secundario <- renovales %>%
+  filter(bosque == "Sec")
+
+# Filter species with >3% abundance in secondary forest
+secun_3 <- renovales %>% 
+  # Compute abundances by species
+  group_by(especie) %>%
+  summarise(
+    n = n(),
+    .groups = "drop"  # avoids grouping messages
+  ) %>%
+  # Compute percent abundance
+  mutate(
+    abundancia = n / sum(n) * 100
+  ) %>%
+  ungroup() %>%
+  # Keep only species with >3% abundance in secondary forest
+  filter(abundancia > 3) %>%
+  # Join back to the original data to keep all columns
+  inner_join(secundario, by = c("especie")) %>%
+  # Drop unused factor levels
+  droplevels()
+
+# Best model for the secondary forest
+m_glmm_quad <- glmer(
+  quebrado ~ especie + poly(diametro_quiebre_mm, 2) + (1 | parcela),
+  data = secun_3,
+  family = binomial
+)
+
+# 1. Ensure 'parcela' is a factor
+secun_3$parcela <- factor(secun_3$parcela)
+
+# 2. Create polynomial variables with the attributes of the original model
+poly_fit <- poly(secun_3$diametro_quiebre_mm, degree = 2)
+secun_3$poly1 <- poly_fit[, 1]
+secun_3$poly2 <- poly_fit[, 2]
+
+# 3. Fit the explicit model using poly1 and poly2
+modelo_explicito <- glmer(
+  quebrado ~ especie * poly1 * poly2 + (1 | parcela),
+  family = binomial,
+  data = secun_3
+)
+
+# 4. Create the prediction grid
+new_data <- expand.grid(
+  diametro_quiebre_mm = seq(
+    min(secun_3$diametro_quiebre_mm, na.rm = TRUE),
+    max(secun_3$diametro_quiebre_mm, na.rm = TRUE),
+    length.out = 100
+  ),
+  bosque = levels(secun_3$bosque),
+  especie = levels(secun_3$especie)
+)
+
+# 5. Add a valid plot level (random effects ignored during prediction)
+new_data$parcela <- factor(
+  levels(secun_3$parcela)[1],
+  levels = levels(secun_3$parcela)
+)
+
+# 6. Compute poly1 and poly2 for new_data using poly_fit
+new_data$poly1 <- predict(poly_fit, new_data$diametro_quiebre_mm)[, 1]
+new_data$poly2 <- predict(poly_fit, new_data$diametro_quiebre_mm)[, 2]
+
+# 7. Predict from the fitted model
+new_data$pred <- predict(
+  modelo_explicito,
+  newdata = new_data,
+  type = "response",
+  re.form = NA
+)
+
+fig_sec_modelo <- 
+  ggplot(new_data, aes(x = diametro_quiebre_mm, y = pred, color = especie)) +
+  geom_line(size = 1) +
+  labs(
+    subtitle = "Secondary forest",
+    y = "Probability of breakage",
+    x = "Sapling diameter (mm)",
+    color = NULL
+  ) +
+  scale_color_discrete(labels = function(x) {
+    ifelse(x == "Lauraceae", x, paste0("*", x, "*"))
+  }) +
+  coord_cartesian(ylim = c(0, 0.4), xlim = c(0, 50)) +
+  theme_bw() +
+  theme(
+    legend.text = element_markdown(),  # needed to render labels with *
+    legend.position = "null",
+    legend.background = element_rect(fill = "transparent"),
+    legend.key = element_rect(fill = "transparent")
+  )
+
+#--- Manly's selection index (secondary forest) --------------------------------
+
+manly_secun <- secun_3 %>%
+  group_by(parcela, especie) %>%
+  summarise(
+    usados = sum(quebrado == "si"),
+    disponibles = n(),
+    .groups = "drop"
+  ) %>%
+  group_by(parcela) %>%
+  mutate(
+    ui_ai = usados / disponibles,
+    suma_ui_ai = sum(ui_ai),
+    alpha = ui_ai / suma_ui_ai,
+    esperado = 1 / n()  # expected value under proportional use
+  ) %>%
+  ungroup()
+
+fig_sec_manly <- 
+  ggplot(manly_secun, aes(x = reorder(especie, alpha), y = alpha, color = especie)) +
+    # geom_boxplot(width = 0.5, show.legend = FALSE) +  # ← commented out by request
+    # Individual points per plot
+    # geom_jitter(size = 2.5, width = 0.15, alpha = 0.7, show.legend = FALSE) +
+    # Mean and standard error per species
+    stat_summary(
+      fun = mean,
+      fun.min = function(x) mean(x) - sd(x) / sqrt(length(x)),
+      fun.max = function(x) mean(x) + sd(x) / sqrt(length(x)),
+      geom = "pointrange",
+      size = 0.8,
+      position = position_nudge(x = 0)
+    ) +
+    # Reference line (proportional use)
+    geom_hline(yintercept = mean(manly_secun$esperado), linetype = "dashed", color = "gray30") +
+    coord_flip() +
+    labs(
+      # title = "Manly's selection index (α)",
+      subtitle = "Secondary forest",
+      y = expression("Selection index" ~ (alpha[i])),
+      x = ""
+    ) +
+    theme_bw() +
+    theme(
+      axis.text.y = element_text(face = "italic"),
+      plot.title = element_text(size = 14),
+      legend.position = "none"
+    )
+
+#--- Combined figure (models + Manly by species) -------------------------------
+
+fig_mad_modelo + fig_mad_manly + fig_sec_modelo + fig_sec_manly +
+  plot_layout(ncol = 2) +
+  plot_annotation(tag_levels = "a", tag_suffix = ")") &
+  theme(plot.tag = element_text(size = 12))
+
+
+```
+
+
+## Figure 5.
+
+```{r}
+#| fig-cap: Diameter and height of sapling breaks caused by tapirs, by forest type.
+#| fig.height: 5
+#| fig.width: 3
+#| fig.align: 'center'
+
+# Sapling break diameter and height by forest type ----
+
+# T-test for breaking diameter (diametro_quiebre_mm) by forest
+stat.test <- compare_means(
+  diametro_quiebre_mm ~ bosque,
+  data = renovales %>% filter(quebrado == "si"),
+  method = "t.test"
+) %>%
+  mutate(
+    y.position = max(renovales$diametro_quiebre_mm, na.rm = TRUE) + 2  # Adjust p-value position
+  ) %>%
+  mutate(
+    bosque = case_when(
+      group1 == "Mad" & group2 == "Sec" ~ "Sec",
+      group1 == "Sec" & group2 == "Mad" ~ "Mad",
+      TRUE ~ NA_character_
+    )
+  )
+
+# ggplot2 figure with t-test p-value
+fig_diam <- 
+  renovales %>%
+  filter(quebrado == "si") %>% 
+  ggplot(aes(x = bosque, y = diametro_quiebre_mm, fill = bosque)) +
+  geom_boxplot(outlier.alpha = 0, show.legend = FALSE) +
+  geom_jitter(size = 1, alpha = 0.05, height = 0, show.legend = FALSE) +
+  stat_summary(geom = "point", fun = "mean", size = 2, show.legend = FALSE) +
+  scale_fill_manual(values = c("#66c2a4", "#ccece6")) +
+  labs(
+    x = NULL,
+    y = "Breaking diameter (mm)"
+  ) +
+  # scale_x_discrete(labels = c("Mad" = "Old-growth", "Sec" = "Secondary")) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_blank()
+  ) +
+  stat_pvalue_manual(
+    stat.test,
+    label = "p = {p.adj}",
+    x = "bosque",
+    y.position = 32
+  )
+
+# T-test for breaking height (altura_quiebre_m) by forest
+stat.test <- compare_means(
+  altura_quiebre_m ~ bosque,
+  data = renovales %>% filter(quebrado == "si"),
+  method = "t.test"
+) %>%
+  mutate(
+    y.position = max(renovales$altura_quiebre_m, na.rm = TRUE) + 0.1  # Adjust p-value position
+  ) %>%
+  mutate(
+    bosque = case_when(
+      group1 == "Mad" & group2 == "Sec" ~ "Sec",
+      group1 == "Sec" & group2 == "Mad" ~ "Mad",
+      TRUE ~ NA_character_
+    )
+  )
+
+# ggplot2 figure with t-test p-value
+fig_altura <- 
+  renovales %>%
+  filter(quebrado == "si") %>% 
+  ggplot(aes(x = bosque, y = altura_quiebre_m, fill = bosque)) +
+  geom_boxplot(outlier.alpha = 0, show.legend = FALSE) +
+  stat_summary(geom = "point", fun = "mean", size = 2, show.legend = FALSE) +
+  geom_jitter(size = 1, alpha = 0.05, height = 0, show.legend = FALSE) +
+  scale_fill_manual(values = c("#66c2a4", "#ccece6")) +
+  labs(
+    x = NULL,
+    y = "Breaking height (m)"
+  ) +
+  scale_x_discrete(labels = c("Mad" = "Old-growth", "Sec" = "Secondary")) +
+  theme_bw() +
+  stat_pvalue_manual(
+    stat.test,
+    label = "p = {p.adj}",
+    x = "bosque",
+    y.position = 1.6
+  )
+
+# Combined figure (diameter and height)
+fig_5 <- 
+fig_diam + fig_altura +
+  plot_layout(ncol = 1) +
+  plot_annotation(tag_levels = "a", tag_suffix = ")") & 
+  theme(plot.tag = element_text(size = 12))
+
+fig_5
+```
+
+## Figure 6.
+
+```{r}
+#| fig-cap: Predicted probabilities of saplings belonging to each height class (< 1 m, 1 – 2 m, > 2 m) to reach the tallest class, as a function of forest type (old–growth vs. secondary) and sapling condition (broken vs. unbroken), based on a multinomial logistic regression model.
+#| fig.height: 3.5
+#| fig.width: 5
+#| fig.align: "center"
+#| out-width: "80%"
+#| message: false
+
+df_altura <- renovales %>%
+  drop_na(bosque, quebrado, altura_indiv) %>%
+  mutate(
+    altura_indiv = factor(case_when(
+      altura_indiv %in% c(0, 1) ~ "< 1 m",
+      altura_indiv == 2 ~ "1-2 m",
+      TRUE ~ "> 2 m"
+    ), levels = c("< 1 m", "1-2 m", "> 2 m"), ordered = TRUE),
+    bosque = factor(bosque),
+    quebrado = factor(quebrado)
+  )
+
+# Ajustar el modelo multinomial
+modelo_multi <- multinom(altura_indiv ~ bosque * quebrado,
+                         data = df_altura,
+                         trace = FALSE)
+
+# Crear todas las combinaciones posibles de predictores
+newdata <- expand.grid(
+  bosque = levels(df_altura$bosque),
+  quebrado = levels(df_altura$quebrado)
+)
+
+# Obtener probabilidades predichas para cada combinación
+preds <- predict(modelo_multi, newdata = newdata, type = "probs")
+
+# Convertir a formato largo para graficar
+df_pred <- cbind(newdata, preds) %>%
+  pivot_longer(cols = c("< 1 m", "1-2 m", "> 2 m"),
+               names_to = "altura_indiv",
+               values_to = "probabilidad") %>%
+  mutate(
+    altura_indiv = factor(altura_indiv, levels = c("< 1 m", "1-2 m", "> 2 m")),
+    quebrado = recode(quebrado, "si" = "Broken", "no" = "Unbroken"))
+
+# Graficar
+ggplot(df_pred, aes(x = altura_indiv, y = probabilidad, fill = quebrado)) +
+  geom_col(position = position_dodge(), width = 0.7) +
+  facet_wrap(~ bosque,
+             labeller = labeller(bosque = 
+                                   c("Mad" = "Old-growth",
+                                     "Sec" = "Secondary"))
+             ) +
+  scale_fill_manual(
+    values = c("#b3e2cd","#fdcdac")
+  ) +
+  labs(
+    # title = "Probabilidad predicha de clase de altura",
+    x = "Height class",
+    y = "Probability",
+    fill = NULL
+  ) +
+  scale_y_continuous(
+    expand = expansion(mult = c(0, 0.05)),
+    limits = c(0, 1), 
+    breaks = seq(0, 1, 0.2)) +
+  theme_bw(base_size = 12)
+```
+
+## Figure 7.
+
+```{r}
+#| fig-cap: Number of shoots per sapling in relation to breakage (broken and unbroken sapling), for each forest type. Jittered points show the observed data; large dots and error bars represent the predicted means and 95% confidence intervals.
+#| fig.height: 3
+#| fig.width: 4
+#| fig.align: "center"
+#| out-width: "60%"
+
+modelo_glmm <- glmmTMB(
+  n_ramas ~ bosque * altura + (1 | parcela),
+  family = nbinom2,
+  data = df_ramas
+)
+
+# Estimated marginal means (EMMs) for all forest type × height combinations
+emm_df <- emmeans::emmeans(modelo_glmm, ~ bosque * altura, type = "response") %>%
+  as.data.frame() %>%
+  dplyr::rename(
+    prob      = response,
+    lower_CI  = asymp.LCL,
+    upper_CI  = asymp.UCL
+  )
+
+ggplot(df_ramas, aes(x = altura, y = n_ramas, fill = altura)) +
+  facet_wrap(
+    ~ bosque,
+    labeller = labeller(bosque = c("Mad" = "Old-growth", "Sec" = "Secondary"))
+  ) +
+  geom_jitter(size = 1, alpha = 0.03, height = 0, show.legend = FALSE) +
+  # Model-based means with confidence intervals
+  geom_errorbar(
+    data = emm_df,
+    aes(x = altura, ymin = lower_CI, ymax = upper_CI),
+    width = 0.2,
+    color = "black",
+    inherit.aes = FALSE
+  ) +
+  geom_point(
+    data = emm_df,
+    aes(x = altura, y = prob, fill = altura),
+    size = 3,
+    shape = 21,
+    show.legend = FALSE,
+    inherit.aes = FALSE
+  ) +
+  scale_x_discrete(labels = c("hasta_1_m" = "Unbroken", "x_debajo_quiebre" = "Broken")) +
+  scale_fill_manual(values = c("#b3e2cd", "#fdcdac")) +
+  labs(
+    x = NULL,
+    y = "Number of shoots per sapling"
+  ) +
+  coord_cartesian(ylim = c(0, 20)) +
+  theme_bw()
+
+```
+
+## Figure 8.
+
+```{r}
+#| fig-cap: (a) Monthly number of vegetation contacts (vertical structure) in each height stratum (0 – 0.5 m, 0.5 – 1.0 m, and 1.0 – 1.5 m) and broken saplings per plot. (b) Predicted number of saplings broken per plot as a function of month, based on a binomial generalized linear model (GLM), including a quadratic term for month. Shaded area represents the 95% confidence interval.
+#| fig.height: 5.5
+#| fig.width: 3
+#| fig.align: "center"
+#| out-width: "50%"
+
+cobertura <- 
+  read_xlsx("Asociación Quiebres_Coberturavegetal.xlsx", 
+            skip = 1
+            )
+
+cobertura <- cobertura %>%
+  mutate(across(where(is.numeric), ~ifelse(is.na(.), 0, .))) %>% # convert NAs
+  # in numeric columns to 0
+  mutate(Parcela = factor(Parcela)) %>% 
+  filter(rowSums(select_if(., is.numeric)) != 0) %>% 
+  mutate(
+    Mes = recode_factor(Mes,
+                        "Febrero" = "Feb",
+                        "Abril" = "Apr",
+                        "Junio" = "Jun",
+                        "Agosto" = "Aug",
+                        "Octubre" = "Oct",
+                        "Diciembre" = "Dec"),
+    # Mes = factor(Mes, levels = c("Febrero",
+    #                              "Abril",
+    #                              "Junio",
+    #                              "Agosto",
+    #                              "Octubre",
+    #                              "Diciembre")),
+    Fecha = as.Date(Fecha),
+    "0 - 0.5 m" = (`0 - 0,25` + `0,25 - 0,50`),
+    "0.5 - 1.0 m" = (`0,50 - 0,75` + `0,75 - 1,00`),
+    "1.0 - 1.5 m" = (`1,00 - 1,25` + `1,25 - 1,50`)
+  ) %>% 
+  rename(`Quiebres\nNuevos` = "Quebrados Nuevos")
+
+# Long (raw) dataset: keep all columns, no grouping
+
+cobertura_long <- cobertura %>%  pivot_longer(
+  cols = c(11:14),
+  names_to = "estrato",
+  values_to = "cob",
+  names_prefix = "x"
+    )
+
+# Long dataset grouped by month and plot
+
+df_cob_parc <- 
+cobertura %>%
+  group_by(Mes, Parcela) %>% 
+  summarise(
+    `0 - 0.5 m` = sum(`0 - 0.5 m`, na.rm = T)/10, # divide by 10 to scale per point. Because the more points sampled per plot, the higher the frequency will be. To standardize, divide by the number of points where touches were counted in each plot (10 points per plot, right?)
+    `0.5 - 1.0 m` = sum(`0.5 - 1.0 m`, na.rm = T)/10,
+    `1.0 - 1.5 m` = sum(`1.0 - 1.5 m`, na.rm = T)/10,
+    `Broken\nsapling` = sum(`Quiebres\nNuevos`, na.rm = T)
+  ) %>% 
+  pivot_longer(
+    cols = c(3:6),
+    names_to = "categorias",
+    values_to = "frec"
+  )
+
+
+fig_quieb_meses <- 
+    df_cob_parc %>% 
+    ggplot(aes(x = Mes, y = frec, color = categorias, group = categorias)) +
+    geom_jitter(alpha = 0.1, height = 0, width = 0.1) +
+    stat_summary(geom = "point", fun = "mean", size = 3) +
+    stat_summary(geom = "line", fun = "mean") +
+    labs(
+      x = NULL,
+      y = "No. of touches and saplings broken",
+      color = NULL
+    ) +
+    coord_cartesian(ylim = c(0, 5)) +
+    theme_bw() +
+    theme(
+      legend.position = c(0.7, 0.7),
+      legend.background = element_rect(fill = "transparent"),
+      legend.key = element_rect(fill = "transparent")
+    )
+
+df_glm_quiebres_veg <- 
+  cobertura %>% 
+  group_by(Fecha, Mes, Parcela) %>% 
+  summarise(
+    Cob_I = sum(`0 - 0.5 m`, na.rm = T)/10, 
+    Cob_II = sum(`0.5 - 1.0 m`, na.rm = T)/10,
+    Cob_III = sum(`1.0 - 1.5 m`, na.rm = T)/10,
+    Cob_II_III = sum(Cob_II + Cob_III)/10,
+    Cob_total = sum(Cob_I + Cob_II + Cob_III)/10,
+    Quiebres = sum(`Quiebres\nNuevos`, na.rm = T)
+  )
+
+
+fig_quiebres_meses_modelo <- 
+  df_glm_quiebres_veg %>% 
+    ggplot(aes(x = Fecha, y = Quiebres)) +
+    geom_jitter(width = 0.1, height = 0, alpha = 0.5) +
+    geom_smooth(
+      method = "glm",
+      formula = y ~ poly(x, 2),
+      method.args = list(family = "poisson"),
+      aes(y = Quiebres, color = "glm_smooth"),
+      show.legend = F
+    ) +
+    labs(
+      x = NULL,
+      y = "No. of saplings broken"
+    ) +
+    scale_x_date(
+      breaks = seq(as.Date("2007-02-01"), as.Date("2007-12-01"), by = "2 months"),
+      labels = date_format("%b"),
+    ) +
+    theme_bw()
+
+fig_quieb_meses + fig_quiebres_meses_modelo +
+  plot_layout(ncol = 1) +
+  plot_annotation(tag_levels = 'a', tag_suffix = ")") & 
+  theme(plot.tag = element_text(size = 12))
+
+```
