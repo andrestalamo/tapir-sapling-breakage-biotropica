@@ -9,7 +9,7 @@ This repository contains the data and R/Quarto workflows used to generate the fi
 - `figures_workflow.qmd`  
   Reproducible workflow for all analytical figures presented in the manuscript (excluding photographs and maps).
 
-- `analysis_workflow.qmd`  
+- `statistical_analysis_workflow.qmd`  
   Reproducible statistical analyses underlying the results section.
 
 - `Renovales (3).xlsx`  
