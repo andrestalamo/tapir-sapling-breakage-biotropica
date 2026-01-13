@@ -1,0 +1,251 @@
+---
+title: "Lowland tapirs (*Tapirus terrestris*) as ecosystem engineers: selective sapling breakage and its structural and dynamic consequences in the Yungas forests of Argentina"
+subtitle: "Reproducible statistical analyses supporting the results of the manuscript on tapir-induced sapling breakage"
+author: 
+  - name: "Soledad de Bustos"
+    affiliation: "Administración de Parques Nacionales"
+    email: soledaddebustos@yahoo.com.ar
+  - name: "Silvia Cristina Chalukian"
+    affiliation: "Tapir Specialist Group – IUCN, Argentina"
+  - name: "Leónidas Lizárraga"
+    affiliation: "Administración de Parques Nacionales"
+  - name: "Rubén Barquez"
+    affiliation: "PIDBA, Facultad de Ciencias Naturales e Instituto Miguel Lillo, Universidad Nacional de Tucumán, Argentina"
+  - name: "Andrés Tálamo"
+    affiliation: "IBIGEO-UNSa-CONICET"
+    email: andrestalamo@gmail.com
+date: today
+title-block-banner: "#c994c7"
+title-block-banner-color: "white"
+format:
+  html:
+    fig-responsive: false 
+    code-fold: true
+    code-annotations: hover  # <- AQUÍ (nuevo)
+    embed-resources: true
+    toc: true
+    toc-location: left
+    toc-depth: 6
+    number-sections: false
+    lang: en
+    theme: journal
+crossref:
+  fig-title: Figure
+  tbl-title: Table
+  fig-prefix: "Fig."
+  tbl-prefix: "Table"
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+---
+
+
+------------------------------------------------------------------------
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r librerias}
+
+library(readxl)
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(float)
+library(xtable)
+library(waffle)
+library(treemapify)
+library(ggrepel)
+library(broom)
+library(gt)
+library(gtsummary)
+library(gtExtras) # para hacer un resumen rápido de la base de datos
+library(janitor)
+library(ggpubr) # para agregar resultados de pruebas a ggplot
+library(rstatix) # para armar resúmenes de pruebas para ggplot
+library(ggridges) # para hacer los polígonos de frecuencia superpuestos
+library(ggcorrplot)
+library(corrplot)
+library(MuMIn)
+library(scales)
+library(DHARMa)
+library(brms)
+# library(MASS)
+# library(conflicted)
+library(emmeans)
+library(lme4)
+library(dplyr)
+library(broom.mixed)
+library(broom)
+library(ggtext)
+library(patchwork)
+library(nnet)
+
+```
+
+## Introduction
+
+This document provides a fully reproducible workflow for the statistical analyses underlying the results presented in the manuscript “**Lowland tapirs (Tapirus terrestris) as ecosystem engineers: selective sapling breakage and its structural consequences in Yungas Andean forests**”.
+
+The objective of this workflow is to document model structure, analytical decisions, and inference procedures independently of figure generation. Figures derived from these analyses are reproduced in a separate workflow dedicated exclusively to visualization.
+
+
+
+------------------------------------------------------------------------
+
+## Data preparation
+
+
+```{r, warning=F}
+
+tapir <- read_xlsx("Renovales (3).xlsx")
+
+tapir <- clean_names(tapir)
+
+tapir <- tapir %>%
+  mutate(across(where(is.character), as.factor)) %>%
+  mutate(quiebre2 = if_else(quebrado == "si", 1L, 0L))
+
+renovales <- tapir %>% 
+  filter(conteo_renovales == 1 & conteo_ramas == 1) %>%  # Filtra solo los individuos
+  mutate(
+    indiv_vivo_muerto = case_when(
+      is.na(indiv_vivo_muerto) & quebrado == "no" ~ "v",
+      is.na(indiv_vivo_muerto) & quebrado == "si" ~ "No registrado",
+      TRUE ~ as.character(indiv_vivo_muerto)
+    ),
+    especie = case_when(
+      especie == "Laurel" ~ "Lauraceae",
+      especie == "1" ~ "Unknown 1",
+      especie == "2" ~ "Unknown 2",
+      TRUE ~ as.character(especie)
+    ),
+    especie = factor(especie),
+    indiv_vivo_muerto = factor(indiv_vivo_muerto,
+                               levels = c("m", "v", "No registrado"))
+    )
+
+# Keep only old–growth forest data
+maduro <- renovales %>%
+  filter(bosque == "Mad")
+
+# Select species with >3% relative abundance in the old–growth forest
+maduro_3 <- renovales %>%
+  group_by(bosque, especie) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(bosque) %>%
+  mutate(abundancia = n / sum(n) * 100) %>%
+  ungroup() %>%
+  filter(bosque == "Mad", abundancia > 3) %>%
+  inner_join(maduro, by = c("bosque", "especie")) %>%
+  droplevels()
+
+# Base filtrada para Bosque secundario con especies que tengan más del 3% de la abundancia
+
+# Base para análisis de nº de ramas según altura
+# Armo la base de datos primero
+
+# names(renovales)
+
+df_ramas <- renovales %>%
+  dplyr::select(parcela, bosque, ramific_hasta_1_m, ramific_x_debajo_quiebre) %>% 
+  pivot_longer(cols = c(3,4),
+               names_to = "altura",
+               values_to = "n_ramas", names_prefix = "ramific_"
+               ) %>% 
+  drop_na()
+
+df_ramas_sp <- renovales %>%
+  dplyr::select(parcela, bosque, especie, ramific_hasta_1_m, ramific_x_debajo_quiebre) %>% 
+  pivot_longer(cols = c(4, 5),
+               names_to = "altura",
+               values_to = "n_ramas", names_prefix = "ramific_"
+               ) %>% 
+  drop_na()
+
+```
+
+------------------------------------------------------------------------
+
+## 3.2 Do tapirs selectively break saplings based on forest type, species, size or successional group?
+
+### Number of broken saplings per plot and species: Poisson regression models (old–growth forest)
+
+#### Model selection
+
+To evaluate whether tapirs selectively break certain species in the old–growth forest, we modeled the number of broken saplings per species (used) using Poisson regression. Sapling availability was accounted for by including the logarithm of the number of available saplings per species (log(available)) as an offset term. This formulation allows inference on relative breakage rates while controlling for differences in species abundance.
+
+Models were fitted both with and without plot identity as a random effect (i.e. GLMM vs. GLM). Model performance was compared to assess whether including plot-level random effects substantially improved model fit. When no meaningful improvement was detected, the simpler model was preferred for parsimony.
+
+```{r}
+#| label: tbl-selec_mod_poisson_mad
+#| tbl-cap: Table S1. Comparison of Poisson regression models fitted to evaluate species–level sapling breakage in the old–growth forest. Models include a log offset for sapling availability and differ in the inclusion of plot identity as a random effect. Model support was assessed using AICc.
+
+
+maduro_offset <- maduro_3 %>%
+  mutate(quebrado = ifelse(quebrado == "si", 1, 0)) %>%
+  group_by(parcela, especie) %>%
+  summarise(
+    usados = sum(quebrado),
+    disponibles = n(),
+    .groups = "drop"
+  )
+
+glm_poison_maduro <- glm(
+  usados ~ especie + offset(log(disponibles)),
+  family = poisson,
+  data = maduro_offset
+)
+
+glmm_poison_maduro <- glmer(
+  usados ~ especie + (1|parcela) + offset(log(disponibles)),
+  family = poisson,
+  data = maduro_offset
+)
+
+aiccs <- model.sel(glm_poison_maduro, glmm_poison_maduro)
+
+# print(aiccs)
+
+# OPCIONAL: ORDENAR Y MOSTRAR CLARAMENTE
+aiccs_summary <- as.data.frame(aiccs) %>%
+  rownames_to_column("Modelo") %>%
+  arrange(delta)
+
+aiccs_summary %>% gt()
+
+```
+
+### Probability of sapling breakage by species: Logistic regression models (old–growth forest)
+
+#### Model selection
+
+We evaluated four candidate models to assess species–level variation in breakage probability in the old–growth forest. Models differed in (i) the inclusion or exclusion of plot identity as a random effect, and (ii) the functional form of stem diameter, modeled either as a linear or a quadratic term.
+
+```{r}
+#| label: tbl-selec_mod_mad
+#| tbl-cap: Model comparison for sapling breakage probability in the old–growth forest, including alternative formulations with and without plot–level random effects and linear or quadratic effects of stem diameter.
+
+
+# Modelos candidatos
+m_glm_quad <- glm(quebrado ~ especie + poly(diametro_quiebre_mm, 2), data = maduro_3, family = binomial)
+m_glm <- glm(quebrado ~ especie + diametro_quiebre_mm, data = maduro_3, family = binomial)
+m_glmm_quad <- glmer(quebrado ~ especie + poly(diametro_quiebre_mm, 2) + (1|parcela), data = maduro_3, family = binomial)
+m_glmm <- glmer(quebrado ~ especie + (1|parcela), data = maduro_3, family = binomial)
+
+aiccs <- model.sel(m_glm_quad, m_glm, m_glmm_quad, m_glmm)
+
+# print(aiccs)
+
+# OPCIONAL: ORDENAR Y MOSTRAR CLARAMENTE
+aiccs_summary <- as.data.frame(aiccs) %>%
+  rownames_to_column("Modelo") %>%
+  arrange(delta)
+
+aiccs_summary %>% gt()
+```
+
+
