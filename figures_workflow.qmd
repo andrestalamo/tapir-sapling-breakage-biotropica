@@ -1,5 +1,5 @@
 ---
-title: "Lowland tapirs (*Tapirus terrestris*) as ecosystem engineers: selective sapling breakage and its structural consequences in Yungas Andean forests"
+title: "Lowland tapirs (*Tapirus terrestris*) as ecosystem engineers: selective sapling breakage and its structural and dynamic consequences in the Yungas forests of Argentina"
 subtitle: "Reproducible workflow for the figures presented in the manuscript" 
 author: 
   - name: "Soledad de Bustos"
