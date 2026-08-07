@@ -9,8 +9,6 @@ This repository contains the data and reproducible R/Quarto workflows associated
 - `statistical_analysis_workflow_post_revision.qmd` is the authoritative workflow for the statistical analyses reported in the revised manuscript.
 - `figures_workflow_post_revision_english.qmd` reproduces the manuscript's data-driven figures (excluding photographs and maps). Figure 5 obtains its p-values programmatically from the post-revision linear mixed-effects models.
 
-The statistical workflow preserves the analysis specifications used in the manuscript. In particular, the original analyses generally use `parcela` as the plot-level random effect. Only the two post-revision linear mixed-effects models for break-point diameter and break height use the unique identifier `parcela_id`, defined as `interaction(bosque, parcela, drop = TRUE)`.
-
 ## Required data
 
 Both data files must be present in the repository root:
