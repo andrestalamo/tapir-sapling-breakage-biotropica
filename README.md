@@ -1,12 +1,12 @@
 # Tapir sapling breakage – Biotropica
 
-This repository contains the data and reproducible R/Quarto workflows associated with the post-peer-review revision of the manuscript:
+This repository contains the data and reproducible R/Quarto workflows supporting the post-peer-review revision of the manuscript:
 
 **Lowland tapirs (*Tapirus terrestris*) as ecosystem engineers: selective sapling breakage and its structural and dynamic consequences in the Yungas subtropical Andean forests of Argentina**
 
-## Browser-ready workflows
+## Online workflows
 
-Browser-ready versions of the reproducible workflows are available at:
+Interactive HTML versions of the reproducible workflows are available through GitHub Pages:
 
 https://andrestalamo.github.io/tapir-sapling-breakage-biotropica/
 
