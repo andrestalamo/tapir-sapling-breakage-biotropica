@@ -1,26 +1,40 @@
 # Tapir sapling breakage – Biotropica
 
-This repository contains the data and R/Quarto workflows used to generate the figures and statistical analyses for the manuscript:
+This repository contains the data and reproducible R/Quarto workflows associated with the post-peer-review revision of the manuscript:
 
-**Lowland tapirs (*Tapirus terrestris*) as ecosystem engineers: selective sapling breakage and its structural consequences in Yungas Andean forests**
+**Lowland tapirs (*Tapirus terrestris*) as ecosystem engineers: selective sapling breakage and its structural and dynamic consequences in the Yungas subtropical Andean forests of Argentina**
 
-## Contents
+## Current post-revision workflows
 
-- `figures_workflow.qmd`  
-  Reproducible workflow for all analytical figures presented in the manuscript (excluding photographs and maps).
+- `statistical_analysis_workflow_post_revision.qmd` is the authoritative workflow for the statistical analyses reported in the revised manuscript.
+- `figures_workflow_post_revision_english.qmd` reproduces the manuscript's data-driven figures (excluding photographs and maps). Figure 5 obtains its p-values programmatically from the post-revision linear mixed-effects models.
 
-- `statistical_analysis_workflow.qmd`  
-  Reproducible statistical analyses underlying the results section.
+The statistical workflow preserves the analysis specifications used in the manuscript. In particular, the original analyses generally use `parcela` as the plot-level random effect. Only the two post-revision linear mixed-effects models for break-point diameter and break height use the unique identifier `parcela_id`, defined as `interaction(bosque, parcela, drop = TRUE)`.
 
-- `Renovales (3).xlsx`  
-  Sapling-level dataset used for all analyses.
+## Required data
 
-- `Asociación Quiebres_Coberturavegetal.xlsx`  
-  Understory cover and seasonal breakage dataset.
+Both data files must be present in the repository root:
 
-## Reproducibility
+- `Renovales (3).xlsx` — sapling-level data used by the statistical and figure workflows.
+- The Excel workbook whose filename ends in `Quiebres_Coberturavegetal.xlsx` — understory-cover and seasonal-breakage data used by both workflows. The workflows locate this file by its stable suffix so that Unicode normalization of the accented filename does not affect reproducibility.
 
-All analyses were conducted in **R** using **Quarto**.  
+## Rendering
+
+Install [R](https://www.r-project.org/) and [Quarto](https://quarto.org/), then install the R packages loaded in each workflow. From the repository root, render the current workflows in clean R sessions with:
+
+```sh
+quarto render statistical_analysis_workflow_post_revision.qmd
+quarto render figures_workflow_post_revision_english.qmd
+```
+
+Each `quarto render` invocation starts a separate R process. The workflows check for the required data and stop with an informative error if a required file is unavailable.
+
+## Archived pre-revision workflows
+
+The following historical workflows are retained for provenance and should not be used to reproduce the revised manuscript:
+
+- `statistical_analysis_workflow.qmd` — pre-revision statistical workflow.
+- `figures_workflow.qmd` — pre-revision figure workflow.
 
 ## Contact
 

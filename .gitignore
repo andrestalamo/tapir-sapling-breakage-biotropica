@@ -36,6 +36,17 @@ vignettes/*.pdf
 *.utf8.md
 *.knit.md
 
+# Quarto/R Markdown generated support directories
+.quarto/
+*_files/
+
+# Rendered post-revision documents (generated from the tracked QMD sources)
+/statistical_analysis_workflow_post_revision.html
+/figures_workflow_post_revision_english.html
+
+# macOS Unicode-normalized alias of the tracked seasonal-cover workbook
+/*Quiebres_Coberturavegetal.xlsx
+
 # R Environment Variables
 .Renviron
 

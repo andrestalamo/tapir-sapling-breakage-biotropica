@@ -1,0 +1,829 @@
+---
+title: "Lowland tapirs (*Tapirus terrestris*) as ecosystem engineers: selective sapling breakage and its structural and dynamic consequences in the Yungas subtropical Andean forests of Argentina"
+subtitle: "Reproducible statistical analysis workflow — post-revision"
+author:
+  - name: "Soledad de Bustos"
+    affiliation: "Dirección Regional Noroeste, Administración de Parques Nacionales, Argentina"
+  - name: "Silvia Cristina Chalukian"
+    affiliation: "Tapir Specialist Group – IUCN, Argentina"
+  - name: "Leónidas Lizárraga"
+    affiliation: "Dirección Regional Noroeste, Administración de Parques Nacionales, Argentina"
+  - name: "Rubén Barquez"
+    affiliation: "PIDBA, Facultad de Ciencias Naturales e Instituto Miguel Lillo, Universidad Nacional de Tucumán, Argentina"
+  - name: "Andrés Tálamo"
+    affiliation: "IBIGEO, UNSa–CONICET; LEAC, Facultad de Ciencias Naturales, Universidad Nacional de Salta, Argentina"
+date: today
+title-block-banner: "#c994c7"
+title-block-banner-color: "white"
+format:
+  html:
+    code-fold: true
+    code-summary: "Show code"
+    code-annotations: hover
+    embed-resources: true
+    toc: true
+    toc-location: left
+    toc-depth: 5
+    number-sections: true
+    lang: en
+    theme: journal
+crossref:
+  tbl-title: Table
+  tbl-prefix: "Table"
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+---
+
+## Purpose of this workflow
+
+This document contains the reproducible statistical analyses supporting the results reported in the post-revision version of the manuscript. It is intentionally separated from `figures_workflow_post_revision_english.qmd`, which reproduces the manuscript figures.
+
+The workflow includes: (1) resource-selection analyses at plot and individual levels; (2) analyses of break-point diameter and height; (3) sapling height-class and resprouting analyses; (4) mortality analyses; and (5) seasonal analyses of recent breakage and understory vegetation cover.
+
+A key post-review change is the replacement of the original Student's *t*-tests comparing break-point diameter and height between forest types with linear mixed-effects models (LMMs), including plot identity as a random intercept. This explicitly accounts for the hierarchical sampling design (saplings nested within plots).
+
+## Libraries
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(readxl)
+library(tidyverse)
+library(janitor)
+library(lme4)
+library(lmerTest)
+library(glmmTMB)
+library(nnet)
+library(MuMIn)
+library(DHARMa)
+# library(car)  # not attached; car::Anova() is called explicitly
+library(broom)
+library(broom.mixed)
+library(gt)
+library(gtsummary)
+library(emmeans)
+library(bbmle)
+library(logistf)
+# library(MASS)  # not attached; MASS::glm.nb() is called explicitly
+
+options(contrasts = c("contr.treatment", "contr.poly"))
+```
+
+# Data preparation
+
+## Sapling data
+
+All analyses in the main sapling dataset are conducted at the individual-sapling level rather than the branch level. The source spreadsheet must be located in the same directory as this workflow.
+
+```{r data-preparation}
+sapling_file <- "Renovales (3).xlsx"
+
+if (!file.exists(sapling_file)) {
+  stop("Required file not found: ", sapling_file)
+}
+
+tapir <- read_xlsx(sapling_file) %>%
+  clean_names() %>%
+  mutate(across(where(is.character), as.factor)) %>%
+  mutate(quiebre2 = if_else(quebrado == "si", 1L, 0L))
+
+renovales <- tapir %>%
+  filter(conteo_renovales == 1, conteo_ramas == 1) %>%
+  mutate(
+    indiv_vivo_muerto = case_when(
+      is.na(indiv_vivo_muerto) & quebrado == "no" ~ "v",
+      is.na(indiv_vivo_muerto) & quebrado == "si" ~ "No registrado",
+      TRUE ~ as.character(indiv_vivo_muerto)
+    ),
+    especie = case_when(
+      especie == "Laurel" ~ "Lauraceae",
+      especie == "1" ~ "Unknown 1",
+      especie == "2" ~ "Unknown 2",
+      TRUE ~ as.character(especie)
+    ),
+    especie = factor(especie),
+    indiv_vivo_muerto = factor(
+      indiv_vivo_muerto,
+      levels = c("m", "v", "No registrado")
+    ),
+    bosque = factor(bosque, levels = c("Mad", "Sec")),
+    parcela = factor(parcela),
+    parcela_id = interaction(bosque, parcela, drop = TRUE),
+  )
+
+# Successional groups used in the manuscript
+renovales <- renovales %>%
+  mutate(
+    gremio_regeneracion = factor(
+      gremio_regeneracion,
+      levels = c("PT", "ST", "BM"),
+      labels = c(
+        "Early-successional",
+        "Mid-successional",
+        "Late-successional"
+      )
+    )
+  )
+
+# Binary response used in binomial models
+renovales <- renovales %>%
+  mutate(broken = if_else(quebrado == "si", 1L, 0L))
+```
+
+### Abundant species within each forest
+
+Species-level RSFs were fitted to species with relative abundance greater than 3% within each forest, following the analytical decisions used for the manuscript.
+
+```{r abundant-species}
+make_abundant_subset <- function(data, forest_code, threshold = 3) {
+  forest_data <- data %>% filter(bosque == forest_code)
+
+  abundant_species <- forest_data %>%
+    count(especie, name = "n") %>%
+    mutate(relative_abundance = 100 * n / sum(n)) %>%
+    filter(relative_abundance > threshold) %>%
+    pull(especie)
+
+  forest_data %>%
+    filter(especie %in% abundant_species) %>%
+    droplevels()
+}
+
+maduro_3 <- make_abundant_subset(renovales, "Mad")
+secun_3  <- make_abundant_subset(renovales, "Sec")
+
+# Abundant species shared between both forest types.
+# The threshold follows the analysis used in the manuscript workflow.
+shared_species <- renovales %>%
+  count(especie, bosque, name = "n") %>%
+  group_by(bosque) %>%
+  mutate(relative_abundance = 100 * n / sum(n)) %>%
+  ungroup() %>%
+  group_by(especie) %>%
+  filter(n_distinct(bosque) == 2) %>%
+  summarise(min_abundance = min(relative_abundance), .groups = "drop") %>%
+  filter(min_abundance > 3) %>%
+  pull(especie)
+
+base_shared <- renovales %>%
+  filter(especie %in% shared_species) %>%
+  droplevels()
+```
+
+## Helper functions
+
+```{r helpers}
+model_selection_table <- function(...) {
+  MuMIn::model.sel(...) %>%
+    as.data.frame() %>%
+    tibble::rownames_to_column("model") %>%
+    arrange(delta) %>%
+    gt()
+}
+
+model_diagnostics <- function(model) {
+  residuals_sim <- DHARMa::simulateResiduals(model)
+  plot(residuals_sim)
+  print(DHARMa::testDispersion(residuals_sim))
+  invisible(residuals_sim)
+}
+
+anova_gt <- function(model, decimals = 3) {
+  car::Anova(model) %>%
+    broom::tidy() %>%
+    gt() %>%
+    fmt_number(columns = where(is.numeric), decimals = decimals)
+}
+```
+
+# 3.2 Do tapirs selectively break saplings based on forest type, species, size, or successional group?
+
+## Plot-level resource selection functions (Poisson models)
+
+The plot-level RSF models use the number of broken saplings as the response and include `log(available)` as an offset. Thus, species-level breakage counts are evaluated relative to their availability within each plot.
+
+### Old-growth forest
+
+```{r plot-rsf-oldgrowth}
+maduro_offset <- maduro_3 %>%
+  group_by(parcela, especie) %>%
+  summarise(
+    used = sum(broken),
+    available = n(),
+    .groups = "drop"
+  )
+
+poisson_mad_glm <- glm(
+  used ~ especie + offset(log(available)),
+  family = poisson,
+  data = maduro_offset
+)
+
+poisson_mad_glmm <- glmer(
+  used ~ especie + offset(log(available)) + (1 | parcela),
+  family = poisson,
+  data = maduro_offset
+)
+
+model_selection_table(poisson_mad_glm, poisson_mad_glmm)
+
+poisson_mad_selected <- get.models(
+  model.sel(poisson_mad_glm, poisson_mad_glmm), 1
+)[[1]]
+
+anova_gt(poisson_mad_selected)
+model_diagnostics(poisson_mad_selected)
+```
+
+### Secondary forest
+
+```{r plot-rsf-secondary}
+secun_offset <- secun_3 %>%
+  group_by(parcela, especie) %>%
+  summarise(
+    used = sum(broken),
+    available = n(),
+    .groups = "drop"
+  )
+
+poisson_sec_glm <- glm(
+  used ~ especie + offset(log(available)),
+  family = poisson,
+  data = secun_offset
+)
+
+poisson_sec_glmm <- glmer(
+  used ~ especie + offset(log(available)) + (1 | parcela),
+  family = poisson,
+  data = secun_offset
+)
+
+model_selection_table(poisson_sec_glm, poisson_sec_glmm)
+
+poisson_sec_selected <- get.models(
+  model.sel(poisson_sec_glm, poisson_sec_glmm), 1
+)[[1]]
+
+anova_gt(poisson_sec_selected)
+model_diagnostics(poisson_sec_selected)
+```
+
+### Species shared between forest types
+
+
+```{r plot-rsf-shared}
+shared_offset <- base_shared %>%
+  group_by(parcela, bosque, especie) %>%
+  summarise(
+    used = sum(broken),
+    available = n(),
+    .groups = "drop"
+  )
+
+poisson_shared_add <- glmer(
+  used ~ bosque + especie + offset(log(available)) + (1 | parcela),
+  family = poisson,
+  data = shared_offset
+)
+
+poisson_shared_inter <- glmer(
+  used ~ bosque * especie + offset(log(available)) + (1 | parcela),
+  family = poisson,
+  data = shared_offset
+)
+
+model_selection_table(poisson_shared_add, poisson_shared_inter)
+anova(poisson_shared_add, poisson_shared_inter, test = "Chisq") %>% gt()
+```
+
+## Individual-level resource selection functions (binomial GLMMs)
+
+The individual-level models use breakage status as the response and allow stem diameter to be incorporated directly as a predictor. Candidate models compare linear versus quadratic diameter effects and models with versus without plot-level random intercepts.
+
+### Old-growth forest: model selection
+
+```{r individual-rsf-oldgrowth}
+mad_glm_linear <- glm(
+  broken ~ especie + diametro_quiebre_mm,
+  family = binomial,
+  data = maduro_3
+)
+
+mad_glm_quad <- glm(
+  broken ~ especie + poly(diametro_quiebre_mm, 2),
+  family = binomial,
+  data = maduro_3
+)
+
+mad_glmm_linear <- glmer(
+  broken ~ especie + diametro_quiebre_mm + (1 | parcela),
+  family = binomial,
+  data = maduro_3
+)
+
+mad_glmm_quad <- glmer(
+  broken ~ especie + poly(diametro_quiebre_mm, 2) + (1 | parcela),
+  family = binomial,
+  data = maduro_3
+)
+
+mad_selection <- model.sel(
+  mad_glm_linear,
+  mad_glm_quad,
+  mad_glmm_linear,
+  mad_glmm_quad
+)
+
+as.data.frame(mad_selection) %>%
+  rownames_to_column("model") %>%
+  arrange(delta) %>%
+  gt()
+
+mad_selected <- get.models(mad_selection, 1)[[1]]
+anova_gt(mad_selected)
+model_diagnostics(mad_selected)
+```
+
+### Secondary forest: model selection
+
+```{r individual-rsf-secondary}
+sec_glm_linear <- glm(
+  broken ~ especie + diametro_quiebre_mm,
+  family = binomial,
+  data = secun_3
+)
+
+sec_glm_quad <- glm(
+  broken ~ especie + poly(diametro_quiebre_mm, 2),
+  family = binomial,
+  data = secun_3
+)
+
+sec_glmm_linear <- glmer(
+  broken ~ especie + diametro_quiebre_mm + (1 | parcela),
+  family = binomial,
+  data = secun_3
+)
+
+sec_glmm_quad <- glmer(
+  broken ~ especie + poly(diametro_quiebre_mm, 2) + (1 | parcela),
+  family = binomial,
+  data = secun_3
+)
+
+sec_selection <- model.sel(
+  sec_glm_linear,
+  sec_glm_quad,
+  sec_glmm_linear,
+  sec_glmm_quad
+)
+
+as.data.frame(sec_selection) %>%
+  rownames_to_column("model") %>%
+  arrange(delta) %>%
+  gt()
+
+sec_selected <- get.models(sec_selection, 1)[[1]]
+anova_gt(sec_selected)
+model_diagnostics(sec_selected)
+```
+
+### Test of forest × species interaction for shared abundant species
+
+This analysis evaluates whether the species-selection pattern differs between old-growth and secondary forests. The random intercept uses the unique forest × plot identifier.
+
+```{r shared-species-interaction}
+shared_additive <- glmer(
+  broken ~ bosque + especie + poly(diametro_quiebre_mm, 2) + (1 | parcela),
+  family = binomial,
+  data = base_shared
+)
+
+shared_interaction <- glmer(
+  broken ~ bosque * especie + poly(diametro_quiebre_mm, 2) + (1 | parcela),
+  family = binomial,
+  data = base_shared
+)
+
+anova(shared_additive, shared_interaction, test = "Chisq") %>% gt()
+
+model_selection_table(shared_additive, shared_interaction)
+```
+
+## Manly's normalized selection index
+
+Manly's normalized selection index is used as a complementary descriptive measure of selection. It is calculated separately within each plot and forest. Values are interpreted relative to the expected value under proportional use, `1/k`, where `k` is the number of species included in that plot.
+
+```{r manly-function}
+calculate_manly <- function(data, plot_var = parcela) {
+  data %>%
+    group_by({{ plot_var }}, especie) %>%
+    summarise(
+      used = sum(broken),
+      available = n(),
+      .groups = "drop"
+    ) %>%
+    group_by({{ plot_var }}) %>%
+    mutate(
+      use_available = used / available,
+      sum_use_available = sum(use_available),
+      alpha = if_else(sum_use_available > 0,
+                      use_available / sum_use_available,
+                      NA_real_),
+      expected = 1 / n()
+    ) %>%
+    ungroup()
+}
+
+manly_mad <- calculate_manly(maduro_3)
+manly_sec <- calculate_manly(secun_3)
+
+manly_summary <- bind_rows(
+  manly_mad %>% mutate(forest = "Old-growth"),
+  manly_sec %>% mutate(forest = "Secondary")
+) %>%
+  group_by(forest, especie) %>%
+  summarise(
+    mean_alpha = mean(alpha, na.rm = TRUE),
+    se_alpha = sd(alpha, na.rm = TRUE) / sqrt(sum(!is.na(alpha))),
+    mean_expected = mean(expected, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+manly_summary %>% gt()
+```
+
+## Successional groups
+
+Species were grouped as early-, mid-, or late-successional. The individual-level analysis evaluates whether breakage probability varies among successional groups while accounting for stem diameter and forest type.
+
+```{r successional-models}
+group_glm_linear <- glm(
+  broken ~ bosque + gremio_regeneracion + diametro_quiebre_mm,
+  family = binomial,
+  data = renovales
+)
+
+group_glm_quad <- glm(
+  broken ~ bosque + gremio_regeneracion + poly(diametro_quiebre_mm, 2),
+  family = binomial,
+  data = renovales
+)
+
+group_glmm_linear <- glmer(
+  broken ~ bosque + gremio_regeneracion + diametro_quiebre_mm + (1 | parcela),
+  family = binomial,
+  data = renovales
+)
+
+group_glmm_quad <- glmer(
+  broken ~ bosque + gremio_regeneracion + poly(diametro_quiebre_mm, 2) + (1 | parcela),
+  family = binomial,
+  data = renovales
+)
+
+group_selection <- model.sel(
+  group_glm_linear,
+  group_glm_quad,
+  group_glmm_linear,
+  group_glmm_quad
+)
+
+as.data.frame(group_selection) %>%
+  rownames_to_column("model") %>%
+  arrange(delta) %>%
+  gt()
+
+group_selected <- get.models(group_selection, 1)[[1]]
+anova_gt(group_selected)
+model_diagnostics(group_selected)
+```
+
+# 3.3 Do breakages alter sapling architecture and increase mortality risk?
+
+## Break-point diameter between forest types — post-revision LMM
+
+The original Student's *t*-test was replaced after peer review by an LMM with forest type as a fixed effect and plot identity as a random intercept. 
+```{r lmm-break-diameter}
+m_diam <- lmer(
+  diametro_quiebre_mm ~ bosque + (1 | parcela_id),
+  data = renovales %>% filter(quebrado == "si")
+)
+
+anova(m_diam) %>% gt()
+summary(m_diam)
+```
+
+The post-revision result is `F(1, 16.64) = 2.33`, `p = 0.146`; therefore, break-point diameter does not differ significantly between forest types after accounting for plot-level variation.
+
+## Break height between forest types — post-revision LMM
+
+```{r lmm-break-height}
+m_altura <- lmer(
+  altura_quiebre_m ~ bosque + (1 | parcela_id),
+  data = renovales %>% filter(quebrado == "si")
+)
+
+anova(m_altura) %>% gt()
+summary(m_altura)
+```
+
+The post-revision result is `F(1, 38.47) = 2.33`, `p = 0.135`; therefore, break height does not differ significantly between forest types after accounting for plot-level variation.
+
+## Sapling total-height classes
+
+Sapling total height was recorded as three ordered categories. Because the proportional-odds assumption required for ordinal regression was not met, a multinomial logistic regression was used.
+
+```{r multinomial-height}
+df_altura <- renovales %>%
+  drop_na(bosque, quebrado, altura_indiv) %>%
+  mutate(
+    height_class = factor(
+      case_when(
+        altura_indiv %in% c(0, 1) ~ "< 1 m",
+        altura_indiv == 2 ~ "1-2 m",
+        TRUE ~ "> 2 m"
+      ),
+      levels = c("< 1 m", "1-2 m", "> 2 m")
+    ),
+    bosque = droplevels(bosque),
+    quebrado = factor(quebrado)
+  )
+
+height_multinom <- multinom(
+  height_class ~ bosque * quebrado,
+  data = df_altura,
+  trace = FALSE
+)
+
+car::Anova(height_multinom) %>%
+  as.data.frame() %>%
+  rownames_to_column("term") %>%
+  gt() %>%
+  fmt_number(columns = where(is.numeric), decimals = 3)
+```
+
+## Resprouting architecture: number of shoots
+
+For unbroken saplings, shoot number is the number of branches below 1 m; for broken saplings, it is the number of shoots below the break point. Count data were overdispersed under a Poisson model, so negative-binomial models were evaluated. Consistent with the original manuscript analysis, the mixed model uses `parcela` as the plot-level random intercept.
+
+```{r shoot-data}
+df_ramas <- renovales %>%
+  dplyr::transmute(
+    parcela = parcela,
+    bosque = bosque,
+    ramific_hasta_1_m = ramific_hasta_1_m,
+    ramific_x_debajo_quiebre = ramific_x_debajo_quiebre
+  ) %>%
+  tidyr::pivot_longer(
+    cols = c(ramific_hasta_1_m, ramific_x_debajo_quiebre),
+    names_to = "condition",
+    values_to = "n_shoots"
+  ) %>%
+  dplyr::mutate(
+    condition = dplyr::case_when(
+      condition == "ramific_hasta_1_m" ~ "Unbroken",
+      condition == "ramific_x_debajo_quiebre" ~ "Broken",
+      TRUE ~ NA_character_
+    ),
+    condition = factor(condition, levels = c("Unbroken", "Broken"))
+  ) %>%
+  tidyr::drop_na(n_shoots)
+```
+
+```{r shoot-model-selection}
+shoot_poisson <- glm(
+  n_shoots ~ bosque * condition,
+  family = poisson,
+  data = df_ramas
+)
+
+# Poisson dispersion check
+shoot_poisson_res <- simulateResiduals(shoot_poisson)
+testDispersion(shoot_poisson_res)
+
+shoot_nb <- MASS::glm.nb(
+  n_shoots ~ bosque * condition,
+  data = df_ramas
+)
+
+shoot_glmm <- glmmTMB(
+  n_shoots ~ bosque * condition + (1 | parcela),
+  family = nbinom2,
+  data = df_ramas
+)
+
+AICtab(shoot_nb, shoot_glmm, weights = TRUE) %>%
+  as.data.frame() %>%
+  rownames_to_column("model") %>%
+  gt()
+
+shoot_res <- simulateResiduals(shoot_glmm)
+testDispersion(shoot_res)
+
+car::Anova(shoot_glmm) %>%
+  as.data.frame() %>%
+  rownames_to_column("term") %>%
+  gt() %>%
+  fmt_number(columns = where(is.numeric), decimals = 3)
+
+emmeans(shoot_glmm, ~ bosque * condition, type = "response")
+```
+
+## Sapling mortality
+
+All observed mortality events occurred among broken saplings, producing complete separation. We therefore use Firth's penalized logistic regression. To reproduce the parameterization reported in the manuscript, the response is coded as survival (`1 = alive`, `0 = dead`). Thus, an odds ratio below 1 for breakage indicates reduced survival; its reciprocal can be interpreted as the corresponding increase in the odds of death.
+
+```{r mortality-models}
+df_survival <- renovales %>%
+  filter(indiv_vivo_muerto != "No registrado") %>%
+  mutate(
+    survival = if_else(indiv_vivo_muerto == "v", 1L, 0L),
+    broken_f = factor(quebrado, levels = c("no", "si"))
+  )
+
+survival_firth_interaction <- logistf(
+  survival ~ bosque * broken_f,
+  data = df_survival
+)
+
+survival_firth_additive <- logistf(
+  survival ~ bosque + broken_f,
+  data = df_survival
+)
+
+model.sel(
+  survival_firth_interaction,
+  survival_firth_additive
+) %>%
+  as.data.frame() %>%
+  rownames_to_column("model") %>%
+  arrange(delta) %>%
+  gt()
+
+survival_selected <- survival_firth_additive
+
+survival_results <- tibble(
+  term = names(coef(survival_selected)),
+  estimate = coef(survival_selected),
+  conf.low = confint(survival_selected)[, 1],
+  conf.high = confint(survival_selected)[, 2],
+  p.value = survival_selected$prob
+) %>%
+  mutate(
+    odds_ratio = exp(estimate),
+    or_low = exp(conf.low),
+    or_high = exp(conf.high),
+    reciprocal_or = if_else(odds_ratio > 0, 1 / odds_ratio, NA_real_)
+  )
+
+survival_results %>%
+  dplyr::select(term, estimate, p.value, odds_ratio, or_low, or_high, reciprocal_or) %>%
+  gt() %>%
+  fmt_number(columns = where(is.numeric), decimals = 3)
+```
+
+# 3.4 Is sapling breakage associated with seasonal or vertical variation in understory cover?
+
+## Seasonal data preparation
+
+The seasonal dataset contains ten secondary-forest plots surveyed every two months from February to December 2007. Vegetation contacts are aggregated into three vertical strata (0–0.5 m, 0.5–1.0 m, and 1.0–1.5 m) and standardized by the ten sampling points per plot.
+
+To avoid dependence on Unicode normalization in the original filename, the workflow searches for the spreadsheet by its stable suffix.
+
+```{r seasonal-data}
+cover_files <- list.files(
+  path = ".",
+  pattern = "Quiebres_Coberturavegetal\\.xlsx$",
+  full.names = TRUE
+)
+
+if (length(cover_files) != 1) {
+  stop(
+    "Expected exactly one seasonal-cover file ending in 'Quiebres_Coberturavegetal.xlsx'; found ",
+    length(cover_files), "."
+  )
+}
+
+cobertura <- read_xlsx(cover_files[[1]], skip = 1) %>%
+  mutate(across(where(is.numeric), ~ replace_na(.x, 0))) %>%
+  mutate(Parcela = factor(Parcela)) %>%
+  filter(rowSums(dplyr::select(., where(is.numeric))) != 0) %>%
+  mutate(
+    Mes = dplyr::recode_factor(
+      Mes,
+      "Febrero" = "Feb",
+      "Abril" = "Apr",
+      "Junio" = "Jun",
+      "Agosto" = "Aug",
+      "Octubre" = "Oct",
+      "Diciembre" = "Dec"
+    ),
+    Fecha = as.Date(Fecha),
+    `0 - 0.5 m` = `0 - 0,25` + `0,25 - 0,50`,
+    `0.5 - 1.0 m` = `0,50 - 0,75` + `0,75 - 1,00`,
+    `1.0 - 1.5 m` = `1,00 - 1,25` + `1,25 - 1,50`
+  ) %>%
+  rename(new_breaks = `Quebrados Nuevos`)
+
+seasonal_model_data <- cobertura %>%
+  group_by(Fecha, Mes, Parcela) %>%
+  summarise(
+    Cob_I = sum(`0 - 0.5 m`, na.rm = TRUE) / 10,
+    Cob_II = sum(`0.5 - 1.0 m`, na.rm = TRUE) / 10,
+    Cob_III = sum(`1.0 - 1.5 m`, na.rm = TRUE) / 10,
+    Cob_II_III = Cob_II + Cob_III,
+    Cob_total = Cob_I + Cob_II + Cob_III,
+    Breaks = sum(new_breaks, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+## Poisson model selection for recent breakage
+
+Candidate models evaluate seasonal variation (date, including a quadratic effect) and understory cover. Model support is compared using AICc.
+
+```{r seasonal-model-selection}
+season_full_quad <- glm(
+  Breaks ~ poly(Fecha, 2) + poly(Cob_I, 2) + poly(Cob_II_III, 2),
+  family = poisson,
+  data = seasonal_model_data
+)
+
+season_full_linear <- glm(
+  Breaks ~ Fecha + Cob_I + Cob_II_III,
+  family = poisson,
+  data = seasonal_model_data
+)
+
+season_date_quad_cover_quad <- glm(
+  Breaks ~ poly(Fecha, 2) + poly(Cob_I, 2),
+  family = poisson,
+  data = seasonal_model_data
+)
+
+season_date_quad_cover <- glm(
+  Breaks ~ poly(Fecha, 2) + Cob_I,
+  family = poisson,
+  data = seasonal_model_data
+)
+
+season_date_quad <- glm(
+  Breaks ~ poly(Fecha, 2),
+  family = poisson,
+  data = seasonal_model_data
+)
+
+season_date_linear <- glm(
+  Breaks ~ Fecha,
+  family = poisson,
+  data = seasonal_model_data
+)
+
+season_cover <- glm(
+  Breaks ~ Cob_I,
+  family = poisson,
+  data = seasonal_model_data
+)
+
+season_cover_quad <- glm(
+  Breaks ~ poly(Cob_I, 2),
+  family = poisson,
+  data = seasonal_model_data
+)
+
+season_selection <- model.sel(
+  season_full_quad,
+  season_full_linear,
+  season_date_quad_cover_quad,
+  season_date_quad_cover,
+  season_date_quad,
+  season_date_linear,
+  season_cover,
+  season_cover_quad
+)
+
+as.data.frame(season_selection) %>%
+  rownames_to_column("model") %>%
+  arrange(delta) %>%
+  gt()
+
+season_selected <- season_date_quad_cover
+
+summary(season_selected)
+gtsummary::tbl_regression(season_selected) %>% as_gt()
+
+season_res <- simulateResiduals(season_selected)
+testDispersion(season_res)
+```
+
+# Session information
+
+For full reproducibility, package and R versions used to render this workflow are recorded below.
+
+```{r session-info}
+sessionInfo()
+```
