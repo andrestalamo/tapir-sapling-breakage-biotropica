@@ -4,6 +4,14 @@ This repository contains the data and reproducible R/Quarto workflows associated
 
 **Lowland tapirs (*Tapirus terrestris*) as ecosystem engineers: selective sapling breakage and its structural and dynamic consequences in the Yungas subtropical Andean forests of Argentina**
 
+## Rendered workflows
+
+Browser-ready versions of the reproducible workflows are available at:
+
+https://andrestalamo.github.io/tapir-sapling-breakage-biotropica/
+
+The QMD files remain the authoritative reproducible source documents; the HTML files are provided for convenient inspection without requiring R or Quarto.
+
 ## Current post-revision workflows
 
 - `statistical_analysis_workflow_post_revision.qmd` is the authoritative workflow for the statistical analyses reported in the revised manuscript.
