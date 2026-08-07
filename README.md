@@ -9,6 +9,13 @@ This repository contains the data and reproducible R/Quarto workflows associated
 - `statistical_analysis_workflow_post_revision.qmd` is the authoritative workflow for the statistical analyses reported in the revised manuscript.
 - `figures_workflow_post_revision_english.qmd` reproduces the manuscript's data-driven figures (excluding photographs and maps). Figure 5 obtains its p-values programmatically from the post-revision linear mixed-effects models.
 
+Rendered, self-contained HTML versions are included for consultation without running R or Quarto:
+
+- `statistical_analysis_workflow_post_revision.html` — rendered statistical analysis workflow.
+- `figures_workflow_post_revision_english.html` — rendered figure workflow.
+
+The QMD files remain the authoritative source documents; the HTML files are their rendered outputs.
+
 ## Required data
 
 Both data files must be present in the repository root:
